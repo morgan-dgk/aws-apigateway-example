@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  apigateway-auth-example
+
+  Sample SAM Template for apigateway-auth-example
+  
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 5 
+
+Resources:
+  AuthorizerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: authorizer-execution-role-v2
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: 
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLambdaInsightsExecutionRolePolicy    
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  ApiGatewayInvokeAuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt LambdaAuthorizerFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:  !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/authorizers/*"
+
+  ApiGatewayInvokeHelloWorldPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt HelloWorldFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/*"
+
+  LambdaAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !GetAtt AuthorizerExecutionRole.Arn
+      CodeUri: authorizer/      
+      Handler: authorizer.lambdaHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 100
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          AWS_ACCOUNT_ID: !Ref AWS::AccountId
+     
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: hello-world/
+      Handler: app.lambdaHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - x86_64
+      Events:
+        HelloWorld:
+          Type: HttpApi # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /hello
+            Method: get
+  
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+        LogGroupName: !Sub "${HttpApi}-access-log"
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiLogGroup.Arn
+        Format: "{ requestId: $context.requestId, requestTime: $context.requestTime, httpMethod: $context.httpMethod, path: $context.path, routeKey: $context.routeKey, status: $context.status, integrationRequestId: $context.integration.requestId, functionResponseStatus: $context.integration.status, integrationServiceStatus: $context.integration.integrationStatus, integrationError: $context.integration.error, authorizerStatus: $context.authorizer.status, authorizerFunctionStatus: $context.authorizer.integrationStatus, authorizerError: $context.authorizer.error, authorizerRequestId: $context.authorizer.requestId, principalId: $context.authorizer.principalId }"
+      Auth:
+        DefaultAuthorizer: LambdaAuthorizer
+        Authorizers:
+          LambdaAuthorizer:
+            AuthorizerPayloadFormatVersion: "2.0"
+            FunctionArn: !GetAtt LambdaAuthorizerFunction.Arn
+            Identity:
+              # See https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html#http-api-lambda-authorizer.identity-sources
+              Headers:
+                - Authorization 
+              ReauthorizeEvery: 0 
+      FailOnWarnings: true
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HelloWorldApi:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/hello"
+
